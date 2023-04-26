@@ -106,13 +106,15 @@ class Authenticate:
         self.token = self.cookie_manager.get(self.cookie_name)
         if self.token is not None:
             self.token = self._token_decode()
-            if self.token is not False:
-                if not st.session_state['logout']:
-                    if self.token['exp_date'] > datetime.utcnow().timestamp():
-                        if 'name' and 'username' in self.token:
-                            st.session_state['name'] = self.token['name']
-                            st.session_state['username'] = self.token['username']
-                            st.session_state['authentication_status'] = True
+            if (
+                self.token is not False
+                and not st.session_state['logout']
+                and self.token['exp_date'] > datetime.utcnow().timestamp()
+                and 'username' in self.token
+            ):
+                st.session_state['name'] = self.token['name']
+                st.session_state['username'] = self.token['username']
+                st.session_state['authentication_status'] = True
     
     def _check_credentials(self, inplace: bool=True) -> bool:
         """
@@ -140,18 +142,16 @@ class Authenticate:
                         st.session_state['authentication_status'] = True
                     else:
                         return True
+                elif inplace:
+                    st.session_state['authentication_status'] = False
                 else:
-                    if inplace:
-                        st.session_state['authentication_status'] = False
-                    else:
-                        return False
+                    return False
             except Exception as e:
                 print(e)
+        elif inplace:
+            st.session_state['authentication_status'] = False
         else:
-            if inplace:
-                st.session_state['authentication_status'] = False
-            else:
-                return False
+            return False
 
     def login(self, form_name: str, location: str='main') -> tuple:
         """
@@ -177,19 +177,19 @@ class Authenticate:
             raise ValueError("Location must be one of 'main' or 'sidebar'")
         if not st.session_state['authentication_status']:
             self._check_cookie()
-            if not st.session_state['authentication_status']:
-                if location == 'main':
-                    login_form = st.form('Login')
-                elif location == 'sidebar':
-                    login_form = st.sidebar.form('Login')
+        if not st.session_state['authentication_status']:
+            if location == 'main':
+                login_form = st.form('Login')
+            elif location == 'sidebar':
+                login_form = st.sidebar.form('Login')
 
-                login_form.subheader(form_name)
-                self.username = login_form.text_input('Username').lower()
-                st.session_state['username'] = self.username
-                self.password = login_form.text_input('Password', type='password')
+            login_form.subheader(form_name)
+            self.username = login_form.text_input('Username').lower()
+            st.session_state['username'] = self.username
+            self.password = login_form.text_input('Password', type='password')
 
-                if login_form.form_submit_button('Login'):
-                    self._check_credentials()
+            if login_form.form_submit_button('Login'):
+                self._check_credentials()
 
         return st.session_state['name'], st.session_state['authentication_status'], st.session_state['username']
 
@@ -206,20 +206,18 @@ class Authenticate:
         """
         if location not in ['main', 'sidebar']:
             raise ValueError("Location must be one of 'main' or 'sidebar'")
-        if location == 'main':
-            if st.button(button_name):
-                self.cookie_manager.delete(self.cookie_name)
-                st.session_state['logout'] = True
-                st.session_state['name'] = None
-                st.session_state['username'] = None
-                st.session_state['authentication_status'] = None
-        elif location == 'sidebar':
-            if st.sidebar.button(button_name):
-                self.cookie_manager.delete(self.cookie_name)
-                st.session_state['logout'] = True
-                st.session_state['name'] = None
-                st.session_state['username'] = None
-                st.session_state['authentication_status'] = None
+        if (
+            location == 'main'
+            and st.button(button_name)
+            or location != 'main'
+            and location == 'sidebar'
+            and st.sidebar.button(button_name)
+        ):
+            self.cookie_manager.delete(self.cookie_name)
+            st.session_state['logout'] = True
+            st.session_state['name'] = None
+            st.session_state['username'] = None
+            st.session_state['authentication_status'] = None
 
     def _update_password(self, username: str, password: str):
         """
@@ -321,9 +319,8 @@ class Authenticate:
         bool
             The status of registering the new user, True: user registered successfully.
         """
-        if preauthorization:
-            if not self.preauthorized:
-                raise ValueError("preauthorization argument must not be None")
+        if preauthorization and not self.preauthorized:
+            raise ValueError("preauthorization argument must not be None")
         if location not in ['main', 'sidebar']:
             raise ValueError("Location must be one of 'main' or 'sidebar'")
         if location == 'main':
@@ -342,15 +339,15 @@ class Authenticate:
             if len(new_email) and len(new_username) and len(new_name) and len(new_password) > 0:
                 if new_username not in self.credentials['usernames']:
                     if new_password == new_password_repeat:
-                        if preauthorization:
-                            if new_email in self.preauthorized['emails']:
-                                self._register_credentials(new_username, new_name, new_password, new_email, preauthorization)
-                                return True
-                            else:
-                                raise RegisterError('User not preauthorized to register')
-                        else:
+                        if (
+                            preauthorization
+                            and new_email in self.preauthorized['emails']
+                            or not preauthorization
+                        ):
                             self._register_credentials(new_username, new_name, new_password, new_email, preauthorization)
                             return True
+                        else:
+                            raise RegisterError('User not preauthorized to register')
                     else:
                         raise RegisterError('Passwords do not match')
                 else:
@@ -405,13 +402,12 @@ class Authenticate:
         username = forgot_password_form.text_input('Username').lower()
 
         if forgot_password_form.form_submit_button('Submit'):
-            if len(username) > 0:
-                if username in self.credentials['usernames']:
-                    return username, self.credentials['usernames'][username]['email'], self._set_random_password(username)
-                else:
-                    return False, None, None
-            else:
+            if len(username) <= 0:
                 raise ForgotError('Username not provided')
+            if username in self.credentials['usernames']:
+                return username, self.credentials['usernames'][username]['email'], self._set_random_password(username)
+            else:
+                return False, None, None
         return None, None, None
 
     def _get_username(self, key: str, value: str) -> str:
@@ -429,10 +425,14 @@ class Authenticate:
         str
             Username associated with given key, value pair i.e. "jsmith".
         """
-        for username, entries in self.credentials['usernames'].items():
-            if entries[key] == value:
-                return username
-        return False
+        return next(
+            (
+                username
+                for username, entries in self.credentials['usernames'].items()
+                if entries[key] == value
+            ),
+            False,
+        )
 
     def forgot_username(self, form_name: str, location: str='main') -> tuple:
         """
